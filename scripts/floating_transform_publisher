@@ -1,0 +1,110 @@
+#!/usr/bin/env python
+
+# Copyright (c) 2017, Rensselaer Polytechnic Institute, Wason Technology LLC
+# All rights reserved.
+# 
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+# 
+#     * Redistributions of source code must retain the above copyright
+#       notice, this list of conditions and the following disclaimer.
+#     * Redistributions in binary form must reproduce the above copyright
+#       notice, this list of conditions and the following disclaimer in the
+#       documentation and/or other materials provided with the distribution.
+#     * Neither the name of the Rensselaer Polytechnic Institute, or Wason 
+#       Technology LLC, nor the names of its contributors may be used to 
+#       endorse or promote products derived from this software without 
+#       specific prior written permission.
+# 
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
+import rospy
+from tf2_msgs.msg import TFMessage
+from geometry_msgs.msg import TransformStamped, Quaternion, Vector3
+from urdf_parser_py.urdf import URDF
+from tf.transformations import quaternion_from_euler
+from floating_transform_publisher.srv import UpdateFloatingTransform, UpdateFloatingTransformResponse
+import threading
+
+class FloatingTransformPublisher(object):
+    def __init__(self, robot_key):
+        self.urdf_robot = URDF.from_parameter_server(robot_key)
+        
+        floating_joints=[]
+        for j in self.urdf_robot.joints:
+            if j.type == "floating":
+                floating_joints.append(j)
+                
+        self.floating_joints=floating_joints
+        
+        now=rospy.Time.now()
+        
+        tfs=[]
+        for j in floating_joints:
+            tf=TransformStamped()
+            tf.header.frame_id=j.parent
+            tf.header.stamp=now
+            tf.child_frame_id=j.child
+            #TODO: fill in origin from URDF
+            tf.transform.translation=Vector3(*j.origin.xyz)       
+            tf.transform.rotation=Quaternion(*quaternion_from_euler(*j.origin.rpy))        
+            tfs.append(tf)
+            
+        self.tfs=tfs
+        
+        self.tf_pub=rospy.Publisher("tf", TFMessage, queue_size=10)
+        self.update_srv=rospy.Service("update_floating_transform", UpdateFloatingTransform, self.update_floating_transform)
+        
+        self._lock=threading.Lock()
+        
+    def publish(self):
+        
+        with self._lock:
+            tf_message=TFMessage(self.tfs)
+            self.tf_pub.publish(tf_message)
+            
+    def update_floating_transform(self, req):
+        with self._lock:
+            now=rospy.Time.now()
+            
+            res=UpdateFloatingTransformResponse(True)
+            req_tfs=req.transforms
+            for req_tf in req_tfs:
+                if not any(e.child_frame_id == req_tf.child_frame_id for e in self.tfs):
+                    rospy.logerr("Invalid child_frame %s", req_tf.child_frame_id)
+                    res.success=False
+                    return res
+                
+            for req_tf in req_tfs:
+                dest_tf=[e for e in self.tfs if e.child_frame_id == req_tf.child_frame_id][0]
+                dest_tf.header.frame_id=req_tf.header.frame_id
+                dest_tf.header.stamp=now
+                dest_tf.child_frame_id=req_tf.child_frame_id
+                dest_tf.transform=req_tf.transform
+                
+            return res
+
+def main():
+    
+    rospy.init_node("floating_transform_publisher")
+    tf=FloatingTransformPublisher('robot_description')
+            
+    rate=rospy.Rate(50)
+       
+    while True:                
+        rate.sleep()
+        tf.publish()        
+
+if __name__ == '__main__':
+    main()
+    
