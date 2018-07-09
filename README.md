@@ -23,3 +23,19 @@ Takes a list of `geometry_msgs/TransformStamped` and updates the floating transf
 **Response**
 
 * `success` - True if the request was successful, otherwise false.
+
+### `/reset_floating_transform
+
+Reset all floating transforms to the URDF defaults.
+
+**Request**
+
+(empty)
+
+**Response**
+
+* `success` - True if the request was successful, otherwise false.
+
+
+
+License: BSD

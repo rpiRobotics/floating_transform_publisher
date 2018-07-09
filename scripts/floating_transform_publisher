@@ -33,8 +33,10 @@ from tf2_msgs.msg import TFMessage
 from geometry_msgs.msg import TransformStamped, Quaternion, Vector3
 from urdf_parser_py.urdf import URDF
 from tf.transformations import quaternion_from_euler
-from floating_transform_publisher.srv import UpdateFloatingTransform, UpdateFloatingTransformResponse
+from floating_transform_publisher.srv import UpdateFloatingTransform, UpdateFloatingTransformResponse, \
+    ResetFloatingTransform, ResetFloatingTransformResponse
 import threading
+import copy
 
 class FloatingTransformPublisher(object):
     def __init__(self, robot_key):
@@ -61,15 +63,20 @@ class FloatingTransformPublisher(object):
             tfs.append(tf)
             
         self.tfs=tfs
+        self.reset_tfs=copy.deepcopy(tfs)
         
         self.tf_pub=rospy.Publisher("tf", TFMessage, queue_size=10)
         self.update_srv=rospy.Service("update_floating_transform", UpdateFloatingTransform, self.update_floating_transform)
+        self.reset_srv=rospy.Service("reset_floating_transform", ResetFloatingTransform, self.reset_floating_transform)
         
         self._lock=threading.Lock()
         
     def publish(self):
         
         with self._lock:
+            now=rospy.Time.now()
+            for tf in self.tfs:
+                tf.header.stamp=now
             tf_message=TFMessage(self.tfs)
             self.tf_pub.publish(tf_message)
             
@@ -94,6 +101,14 @@ class FloatingTransformPublisher(object):
                 
             return res
 
+    def reset_floating_transform(self, req):
+        with self._lock:
+            now=rospy.Time.now()
+            self.tfs=copy.deepcopy(self.reset_tfs)
+            for tf in self.tfs:
+                tf.header.stamp=now
+            return ResetFloatingTransformResponse(True)
+        
 def main():
     
     rospy.init_node("floating_transform_publisher")
